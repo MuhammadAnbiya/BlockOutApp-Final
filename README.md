@@ -1,3 +1,5 @@
+![Logo](https://drive.google.com/uc?export=view&id=1inNRd7Xi-Of1pg_ocP2FmWQ3v27uITY-)
+
 # 📱 BlockOut - Move to Unblock
 
 ![BlockOut Banner](https://via.placeholder.com/1200x300?text=BlockOut:+Beat+Screen+Addiction+with+Fitness)
