@@ -1,12 +1,8 @@
 import React, { useRef, useState, useEffect, useCallback } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Dimensions } from 'react-native';
 import Webcam from 'react-webcam';
-// KITA HAPUS SEMUA IMPORT DARI @mediapipe AGAR TIDAK ERROR DI METRO BUNDLER
-// import { drawConnectors, drawLandmarks } from '@mediapipe/drawing_utils';
-// import { Camera } from '@mediapipe/camera_utils';
-
-import { calculateAngle, checkPushUpState } from '../lib/poseCalculator';
-import { apiMintReward } from '../lib/authApi';
+import { calculateAngle } from '@/lib/poseCalculator';
+import { apiMintReward } from '@/lib/authApi';
 import * as SecureStore from 'expo-secure-store';
 import { useRouter } from 'expo-router';
 
@@ -15,21 +11,22 @@ export default function PushUpCameraWeb() {
   const webcamRef = useRef<any>(null);
   const canvasRef = useRef<any>(null);
   
-  // State untuk memastikan semua script AI sudah siap
   const [isPoseLoaded, setIsPoseLoaded] = useState(false);
   const [isCameraLoaded, setIsCameraLoaded] = useState(false);
   const [isDrawingLoaded, setIsDrawingLoaded] = useState(false);
   
   const [poseModel, setPoseModel] = useState<any>(null);
   const [count, setCount] = useState(0);
-  const [stage, setStage] = useState<string | null>("UP");
+  const [stage, setStage] = useState<string | null>("UP"); 
   const [timer, setTimer] = useState(0);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [debugAngle, setDebugAngle] = useState(0);
 
-  // Cek apakah semua dependency sudah siap
+  const countRef = useRef(0);
+  const isDownRef = useRef(false);
+
   const isReady = isPoseLoaded && isCameraLoaded && isDrawingLoaded;
 
-  // Timer Logic
   useEffect(() => {
     const interval = setInterval(() => {
       setTimer((prev) => prev + 1);
@@ -37,7 +34,6 @@ export default function PushUpCameraWeb() {
     return () => clearInterval(interval);
   }, []);
 
-  // --- 1. Load Script MediaPipe dari CDN (Solusi Paling Stabil) ---
   useEffect(() => {
     const loadScript = (src: string, onLoad: () => void) => {
       if (document.querySelector(`script[src="${src}"]`)) {
@@ -52,27 +48,11 @@ export default function PushUpCameraWeb() {
       document.body.appendChild(script);
     };
 
-    // Load Pose
-    loadScript('https://cdn.jsdelivr.net/npm/@mediapipe/pose@0.5.1675469404/pose.js', () => {
-      console.log("Pose Loaded");
-      setIsPoseLoaded(true);
-    });
-
-    // Load Camera Utils
-    loadScript('https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js', () => {
-      console.log("Camera Utils Loaded");
-      setIsCameraLoaded(true);
-    });
-
-    // Load Drawing Utils
-    loadScript('https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js', () => {
-      console.log("Drawing Utils Loaded");
-      setIsDrawingLoaded(true);
-    });
-
+    loadScript('https://cdn.jsdelivr.net/npm/@mediapipe/pose@0.5.1675469404/pose.js', () => setIsPoseLoaded(true));
+    loadScript('https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js', () => setIsCameraLoaded(true));
+    loadScript('https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js', () => setIsDrawingLoaded(true));
   }, []);
 
-  // --- 2. Inisialisasi Model Pose ---
   useEffect(() => {
     if (!isReady) return;
 
@@ -100,7 +80,6 @@ export default function PushUpCameraWeb() {
     };
   }, [isReady]);
 
-  // --- 3. Setup Kamera ---
   useEffect(() => {
     if (!poseModel || !webcamRef.current || !webcamRef.current.video || !isReady) return;
 
@@ -112,9 +91,7 @@ export default function PushUpCameraWeb() {
         if (webcamRef.current?.video && poseModel) {
           try {
             await poseModel.send({ image: webcamRef.current.video });
-          } catch (err) {
-            // Ignore frame errors
-          }
+          } catch (err) {}
         }
       },
       width: 640,
@@ -122,13 +99,8 @@ export default function PushUpCameraWeb() {
     });
     
     camera.start();
-
-    return () => {
-      // Biarkan browser menghandle stop
-    };
   }, [poseModel, isReady]);
 
-  // --- 4. Fungsi Callback Hasil Deteksi ---
   const onResults = useCallback((results: any) => {
     if (!canvasRef.current || !webcamRef.current || !webcamRef.current.video) return;
 
@@ -142,15 +114,16 @@ export default function PushUpCameraWeb() {
     if (!canvasCtx) return;
 
     canvasCtx.save();
+    canvasCtx.scale(-1, 1);
+    canvasCtx.translate(-videoWidth, 0);
+    
     canvasCtx.clearRect(0, 0, videoWidth, videoHeight);
     
-    // Ambil drawing utils dari window
     const drawConnectors = (window as any).drawConnectors;
     const drawLandmarks = (window as any).drawLandmarks;
     const POSE_CONNECTIONS = (window as any).POSE_CONNECTIONS;
 
     if (results.poseLandmarks) {
-      // Gambar Garis & Titik (Jika library sudah load)
       if (drawConnectors && POSE_CONNECTIONS) {
         drawConnectors(canvasCtx, results.poseLandmarks, POSE_CONNECTIONS, {
           color: '#00FF00', lineWidth: 4
@@ -162,30 +135,54 @@ export default function PushUpCameraWeb() {
         });
       }
 
-      // --- LOGIC HITUNG PUSH UP ---
       const landmarks = results.poseLandmarks;
-      const shoulder = landmarks[11];
-      const elbow = landmarks[13];
-      const wrist = landmarks[15];
+      
+      const leftPoints = [landmarks[11], landmarks[13], landmarks[15]]; 
+      const rightPoints = [landmarks[12], landmarks[14], landmarks[16]];
 
-      if (shoulder && elbow && wrist) {
-        const angle = calculateAngle(shoulder, elbow, wrist);
+      let activeAngle = 0;
+      let activeElbow = null;
+
+      const leftVis = (leftPoints[0]?.visibility || 0) + (leftPoints[1]?.visibility || 0);
+      const rightVis = (rightPoints[0]?.visibility || 0) + (rightPoints[1]?.visibility || 0);
+
+      if (leftVis > rightVis && leftPoints[0] && leftPoints[1] && leftPoints[2]) {
+        activeAngle = calculateAngle(leftPoints[0], leftPoints[1], leftPoints[2]);
+        activeElbow = leftPoints[1];
+      } else if (rightPoints[0] && rightPoints[1] && rightPoints[2]) {
+        activeAngle = calculateAngle(rightPoints[0], rightPoints[1], rightPoints[2]);
+        activeElbow = rightPoints[1];
+      }
+
+      if (activeAngle > 0) {
+        setDebugAngle(Math.floor(activeAngle));
+
+        if (activeAngle < 100) {
+            if (!isDownRef.current) {
+                isDownRef.current = true;
+                setStage("DOWN");
+            }
+        } else if (activeAngle > 160) {
+            if (isDownRef.current) {
+                countRef.current += 1;
+                setCount(countRef.current);
+                isDownRef.current = false;
+                setStage("UP");
+            }
+        }
+
+        canvasCtx.save();
+        canvasCtx.scale(-1, 1); 
+        const textX = - (activeElbow.x * videoWidth); 
+        const textY = activeElbow.y * videoHeight;
         
-        setStage((prevStage) => {
-           const check = checkPushUpState(angle, prevStage);
-           if (check.isRep) {
-             setCount(c => c + 1);
-           }
-           return check.stage;
-        });
-
-        // Visualisasi Sudut
-        canvasCtx.font = "30px Arial";
-        canvasCtx.fillStyle = "white";
-        canvasCtx.fillText(Math.floor(angle).toString(), elbow.x * videoWidth, elbow.y * videoHeight);
+        canvasCtx.font = "bold 40px Arial";
+        canvasCtx.fillStyle = activeAngle < 100 ? "#00FF00" : "white";
+        canvasCtx.fillText(Math.floor(activeAngle).toString(), textX, textY);
+        canvasCtx.restore();
       }
     }
-    canvasCtx.restore();
+    canvasCtx.restore(); 
   }, []);
 
   const handleFinish = async () => {
@@ -202,12 +199,13 @@ export default function PushUpCameraWeb() {
       const result = await apiMintReward({
         workoutType: "PUSH_UP",
         count: count,
-        duration: timer,
+        duration: timer > 0 ? timer : 10,
         walletAddress: "" 
       }, token);
 
-      alert(`Selamat! Anda mendapatkan waktu: ${result.data.formattedTime}`);
-      router.back();
+      alert(`Selamat! Anda mendapatkan waktu: ${result.data.formattedTime}\nKoin: ${result.data.coinsEarned}`);
+      
+      router.replace('/(dashboard)/blockout'); 
 
     } catch (error: any) {
       alert("Gagal menyimpan workout: " + (error.message || "Unknown Error"));
@@ -245,7 +243,8 @@ export default function PushUpCameraWeb() {
         <View style={styles.statsContainer}>
             <Text style={styles.statLabel}>Count: <Text style={styles.statValue}>{count}</Text></Text>
             <Text style={styles.statLabel}>Time: <Text style={styles.statValue}>{formatTime(timer)}</Text></Text>
-            <Text style={styles.statLabel}>Stage: <Text style={styles.statValue}>{stage}</Text></Text>
+            <Text style={styles.statLabel}>Stage: <Text style={{color: stage === "DOWN" ? "#00FF00" : "#00D1FF", fontWeight: 'bold'}}>{stage}</Text></Text>
+            <Text style={{color: 'yellow', fontSize: 14}}>Angle: {debugAngle}° (Target: &lt;100)</Text>
         </View>
 
         <TouchableOpacity 
