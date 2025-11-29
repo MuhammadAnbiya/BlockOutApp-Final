@@ -1,4 +1,6 @@
-<img src="https://drive.google.com/uc?export=view&id=1inNRd7Xi-Of1pg_ocP2FmWQ3v27uITY-" width="150" alt="Logo BlockOut">
+<p align="center">
+  <img src="https://drive.google.com/uc?export=view&id=1inNRd7Xi-Of1pg_ocP2FmWQ3v27uITY-" width="120" style="border-radius: 15px;" alt="BlockOut Logo Rounded">
+</p>
 
 # 📱 BlockOut - Move to Unblock
 
