@@ -1,133 +1,391 @@
-import { Colors } from "@/constants/theme";
-import { Ionicons } from "@expo/vector-icons";
-import MaterialIcons from "@expo/vector-icons/MaterialIcons";
-import { Tabs, useRouter } from "expo-router";
-import React from "react";
-import { Platform, View } from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
+import React, { useRef, useState, useEffect, useCallback } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, Dimensions } from 'react-native';
+import Webcam from 'react-webcam';
 
-const TabBarIcon = React.memo(
-  ({
-    routeName,
-    color,
-    focused,
-  }: {
-    routeName: string;
-    color: string;
-    focused: boolean;
-  }) => {
-    if (routeName === "camera") {
-      return (
-        <View
-          style={{
-            width: 50,
-            height: 50,
-            backgroundColor: Colors.tertiary,
-            borderRadius: 25,
-            justifyContent: "center",
-            alignItems: "center",
-            marginBottom: 20,
-            shadowColor: Colors.tertiary,
-            shadowOffset: { width: 0, height: 4 },
-            shadowOpacity: 0.3,
-            shadowRadius: 4,
-            elevation: 5,
-          }}
-        >
-          <Ionicons name="camera" size={28} color="black" />
-        </View>
-      );
-    }
+// --- PERBAIKAN IMPORT (Gunakan @/ agar pasti ketemu) ---
+import { calculateAngle, checkPushUpState } from '@/lib/poseCalculator';
+import { apiMintReward } from '@/lib/authApi';
+// ------------------------------------------------------
 
-    if (routeName === "blockout") {
-      return (
-        <MaterialIcons
-          name="block"
-          size={24}
-          color={color}
-          style={{ marginBottom: -2 }}
-        />
-      );
-    }
+import * as SecureStore from 'expo-secure-store';
+import { useRouter } from 'expo-router';
 
-    let iconName: string = "ellipse-outline";
+const SCREEN_WIDTH = Dimensions.get('window').width;
+const SCREEN_HEIGHT = Dimensions.get('window').height;
 
-    switch (routeName) {
-      case "avatar":
-        iconName = focused ? "person" : "person-outline";
-        break;
-      case "shop":
-        iconName = focused ? "cart" : "cart-outline";
-        break;
-      case "settings":
-        iconName = focused ? "settings" : "settings-outline";
-        break;
-    }
-
-    return (
-      <Ionicons
-        name={iconName as any}
-        size={24}
-        color={color}
-        style={{ marginBottom: -2 }}
-      />
-    );
-  }
-);
-
-const DashboardLayout = () => {
-  const insets = useSafeAreaInsets();
+export default function PushUpCameraWeb() {
+  // ... (Sisa kode ke bawah SAMA PERSIS, tidak perlu diubah)
   const router = useRouter();
+  const webcamRef = useRef<any>(null);
+  const canvasRef = useRef<any>(null);
+  
+  // State untuk memastikan semua script AI sudah siap
+  const [isPoseLoaded, setIsPoseLoaded] = useState(false);
+  const [isCameraLoaded, setIsCameraLoaded] = useState(false);
+  const [isDrawingLoaded, setIsDrawingLoaded] = useState(false);
+  
+  const [poseModel, setPoseModel] = useState<any>(null);
+  const [count, setCount] = useState(0);
+  const [stage, setStage] = useState<string | null>("UP");
+  const [timer, setTimer] = useState(0);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [debugAngle, setDebugAngle] = useState(0); // Untuk melihat sudut di layar
+
+  // Cek apakah semua dependency sudah siap
+  const isReady = isPoseLoaded && isCameraLoaded && isDrawingLoaded;
+
+  // Timer Logic
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setTimer((prev) => prev + 1);
+    }, 1000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // --- 1. Load Script MediaPipe dari CDN (Solusi Paling Stabil) ---
+  useEffect(() => {
+    const loadScript = (src: string, onLoad: () => void) => {
+      if (document.querySelector(`script[src="${src}"]`)) {
+        onLoad();
+        return;
+      }
+      const script = document.createElement('script');
+      script.src = src;
+      script.async = true;
+      script.crossOrigin = 'anonymous';
+      script.onload = onLoad;
+      document.body.appendChild(script);
+    };
+
+    // Load Pose
+    loadScript('https://cdn.jsdelivr.net/npm/@mediapipe/pose@0.5.1675469404/pose.js', () => {
+      console.log("Pose Loaded");
+      setIsPoseLoaded(true);
+    });
+
+    // Load Camera Utils
+    loadScript('https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js', () => {
+      console.log("Camera Utils Loaded");
+      setIsCameraLoaded(true);
+    });
+
+    // Load Drawing Utils
+    loadScript('https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js', () => {
+      console.log("Drawing Utils Loaded");
+      setIsDrawingLoaded(true);
+    });
+
+  }, []);
+
+  // --- 2. Inisialisasi Model Pose ---
+  useEffect(() => {
+    if (!isReady) return;
+
+    const Pose = (window as any).Pose;
+    if (!Pose) return;
+
+    const pose = new Pose({
+      locateFile: (file: string) => {
+        return `https://cdn.jsdelivr.net/npm/@mediapipe/pose@0.5.1675469404/${file}`;
+      },
+    });
+
+    pose.setOptions({
+      modelComplexity: 1,
+      smoothLandmarks: true,
+      minDetectionConfidence: 0.5,
+      minTrackingConfidence: 0.5,
+    });
+
+    pose.onResults(onResults);
+    setPoseModel(pose);
+
+    return () => {
+      pose.close();
+    };
+  }, [isReady]);
+
+  // --- 3. Setup Kamera ---
+  useEffect(() => {
+    if (!poseModel || !webcamRef.current || !webcamRef.current.video || !isReady) return;
+
+    const Camera = (window as any).Camera;
+    if (!Camera) return;
+
+    const camera = new Camera(webcamRef.current.video, {
+      onFrame: async () => {
+        if (webcamRef.current?.video && poseModel) {
+          try {
+            await poseModel.send({ image: webcamRef.current.video });
+          } catch (err) {
+            // Ignore frame errors
+          }
+        }
+      },
+      width: 640,
+      height: 480,
+    });
+    
+    camera.start();
+
+    return () => {
+      // Biarkan browser menghandle stop
+    };
+  }, [poseModel, isReady]);
+
+  // --- 4. Fungsi Callback Hasil Deteksi ---
+  const onResults = useCallback((results: any) => {
+    if (!canvasRef.current || !webcamRef.current || !webcamRef.current.video) return;
+
+    const videoWidth = webcamRef.current.video.videoWidth;
+    const videoHeight = webcamRef.current.video.videoHeight;
+
+    canvasRef.current.width = videoWidth;
+    canvasRef.current.height = videoHeight;
+
+    const canvasCtx = canvasRef.current.getContext('2d');
+    if (!canvasCtx) return;
+
+    // --- PERBAIKAN MIRRORING ---
+    // Balik canvas secara horizontal agar pas dengan video yang di-mirror
+    canvasCtx.save();
+    canvasCtx.scale(-1, 1);
+    canvasCtx.translate(-videoWidth, 0);
+    
+    canvasCtx.clearRect(0, 0, videoWidth, videoHeight);
+    
+    // Ambil drawing utils dari window
+    const drawConnectors = (window as any).drawConnectors;
+    const drawLandmarks = (window as any).drawLandmarks;
+    const POSE_CONNECTIONS = (window as any).POSE_CONNECTIONS;
+
+    if (results.poseLandmarks) {
+      // Gambar Garis & Titik
+      if (drawConnectors && POSE_CONNECTIONS) {
+        drawConnectors(canvasCtx, results.poseLandmarks, POSE_CONNECTIONS, {
+          color: '#00FF00', lineWidth: 4
+        });
+      }
+      if (drawLandmarks) {
+        drawLandmarks(canvasCtx, results.poseLandmarks, {
+          color: '#FF0000', lineWidth: 2
+        });
+      }
+
+      // --- LOGIC HITUNG PUSH UP (AUTO DETECT LEFT / RIGHT ARM) ---
+      const landmarks = results.poseLandmarks;
+      
+      // Ambil Keypoint Kiri
+      const leftShoulder = landmarks[11];
+      const leftElbow = landmarks[13];
+      const leftWrist = landmarks[15];
+
+      // Ambil Keypoint Kanan
+      const rightShoulder = landmarks[12];
+      const rightElbow = landmarks[14];
+      const rightWrist = landmarks[16];
+
+      // Cek visibilitas (mana yang lebih terlihat jelas oleh kamera?)
+      const leftVisibility = leftElbow?.visibility || 0;
+      const rightVisibility = rightElbow?.visibility || 0;
+
+      let activeAngle = 0;
+      let activeElbow = null;
+
+      // Pilih tangan yang paling terlihat
+      if (leftVisibility > rightVisibility && leftShoulder && leftElbow && leftWrist) {
+        activeAngle = calculateAngle(leftShoulder, leftElbow, leftWrist);
+        activeElbow = leftElbow;
+      } else if (rightShoulder && rightElbow && rightWrist) {
+        activeAngle = calculateAngle(rightShoulder, rightElbow, rightWrist);
+        activeElbow = rightElbow;
+      }
+
+      if (activeAngle > 0) {
+        setDebugAngle(Math.floor(activeAngle)); // Tampilkan sudut untuk debug
+
+        setStage((prevStage) => {
+           const check = checkPushUpState(activeAngle, prevStage);
+           if (check.isRep) {
+             setCount(c => c + 1);
+           }
+           return check.stage;
+        });
+
+        // Visualisasi Sudut di Dekat Siku (Agar user tahu)
+        // Kita harus "un-mirror" teksnya agar bisa dibaca user
+        canvasCtx.save();
+        canvasCtx.scale(-1, 1); 
+        canvasCtx.font = "30px Arial";
+        canvasCtx.fillStyle = "white";
+        // Trik matematika untuk menaruh teks di posisi yang benar setelah di-flip balik
+        const textX = - (activeElbow.x * videoWidth); 
+        const textY = activeElbow.y * videoHeight;
+        canvasCtx.fillText(Math.floor(activeAngle).toString(), textX, textY);
+        canvasCtx.restore();
+      }
+    }
+    canvasCtx.restore(); // Restore mirror effect
+  }, []);
+
+  const handleFinish = async () => {
+    if (count === 0) {
+      alert("Lakukan minimal 1 push up!");
+      return;
+    }
+
+    setIsProcessing(true);
+    try {
+      const token = await SecureStore.getItemAsync('accessToken');
+      if (!token) throw new Error("No token found. Silakan Login ulang.");
+
+      const result = await apiMintReward({
+        workoutType: "PUSH_UP",
+        count: count,
+        duration: timer,
+        walletAddress: "" 
+      }, token);
+
+      alert(`Selamat! Anda mendapatkan waktu: ${result.data.formattedTime}`);
+      router.back();
+
+    } catch (error: any) {
+      alert("Gagal menyimpan workout: " + (error.message || "Unknown Error"));
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const formatTime = (seconds: number) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins < 10 ? '0' : ''}${mins}:${secs < 10 ? '0' : ''}${secs}`;
+  };
 
   return (
-    <Tabs
-      screenOptions={({ route }) => ({
-        headerShown: false,
-        tabBarShowLabel: route.name !== "camera",
-        lazy: true,
-        animation: "shift",
-        navigationBarColor: Colors.primary,
-        freezeOnBlur: true,
-        contentStyle: { backgroundColor: Colors.primary },
-        tabBarStyle: {
-          backgroundColor: Colors.primary,
-          paddingBottom: Platform.OS === "android" ? insets.bottom + 6 : 6,
-          paddingTop: 4,
-          height: Platform.OS === "android" ? 65 + insets.bottom : 65,
-          borderTopWidth: 0,
-          elevation: 0,
-          position: "absolute",
-        },
-        tabBarItemStyle: { paddingVertical: 0 },
-        tabBarLabelStyle: { marginTop: 4, fontSize: 12 },
-        tabBarActiveTintColor: Colors.tertiary,
-        tabBarInactiveTintColor: Colors.quarternary,
-        sceneStyle: { backgroundColor: Colors.primary },
-        tabBarIcon: ({ color, focused }) => (
-          <TabBarIcon routeName={route.name} color={color} focused={focused} />
-        ),
-      })}
-    >
-      <Tabs.Screen name="blockout" options={{ title: "Blockout" }} />
-      <Tabs.Screen name="avatar" options={{ title: "Avatar" }} />
+    <View style={styles.container}>
+      <View style={styles.cameraContainer}>
+         <Webcam
+            ref={webcamRef}
+            style={styles.webcam}
+            mirrored
+          />
+         <canvas ref={canvasRef} style={styles.canvas} />
+      </View>
 
-      <Tabs.Screen
-        name="camera"
-        options={{
-          title: "Camera",
-        }}
-        listeners={() => ({
-          tabPress: (e) => {
-            e.preventDefault();
-            router.push("/(workout)/camera" as any);
-          },
-        })}
-      />
+      <View style={styles.overlay}>
+        {!isReady && (
+            <Text style={{color: 'yellow', fontSize: 16, marginBottom: 10, backgroundColor: 'rgba(0,0,0,0.5)', padding: 5}}>
+                Loading AI Modules... (Mohon Tunggu)
+            </Text>
+        )}
 
-      <Tabs.Screen name="shop" options={{ title: "Shop" }} />
-      <Tabs.Screen name="settings" options={{ title: "Settings" }} />
-    </Tabs>
+        <Text style={styles.title}>Do some Push Up</Text>
+        
+        <View style={styles.statsContainer}>
+            <Text style={styles.statLabel}>Count: <Text style={styles.statValue}>{count}</Text></Text>
+            <Text style={styles.statLabel}>Time: <Text style={styles.statValue}>{formatTime(timer)}</Text></Text>
+            <Text style={styles.statLabel}>Stage: <Text style={styles.statValue}>{stage}</Text></Text>
+            {/* Tampilkan Angle untuk membantu user */}
+            <Text style={{color: 'yellow', fontSize: 14}}>Angle: {debugAngle}°</Text>
+        </View>
+
+        <TouchableOpacity 
+          style={styles.finishButton} 
+          onPress={handleFinish}
+          disabled={isProcessing || !isReady}
+        >
+          <Text style={styles.finishText}>
+            {isProcessing ? "Saving..." : "Finish"}
+          </Text>
+        </TouchableOpacity>
+      </View>
+    </View>
   );
-};
+}
 
-export default React.memo(DashboardLayout);
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: 'black',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  cameraContainer: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    width: '100%',
+    height: '100%',
+    zIndex: 1,
+  },
+  webcam: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    textAlign: 'center',
+    zIndex: 9,
+    width: '100%',
+    height: '100%',
+    objectFit: 'cover' as any, 
+  },
+  canvas: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    textAlign: 'center',
+    zIndex: 9,
+    width: '100%',
+    height: '100%',
+    objectFit: 'cover' as any,
+  },
+  overlay: {
+    zIndex: 20,
+    position: 'absolute',
+    bottom: 50,
+    alignItems: 'center',
+    width: '100%',
+  },
+  title: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    color: '#00D1FF',
+    marginBottom: 20,
+    position: 'absolute',
+    top: 50, 
+    textShadowColor: 'rgba(0,0,0,0.75)',
+    textShadowOffset: {width: -1, height: 1},
+    textShadowRadius: 10
+  },
+  statsContainer: {
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    padding: 20,
+    borderRadius: 15,
+    marginBottom: 20,
+    alignItems: 'center',
+  },
+  statLabel: {
+    color: 'white',
+    fontSize: 18,
+    marginVertical: 5,
+  },
+  statValue: {
+    color: '#00D1FF',
+    fontWeight: 'bold',
+    fontSize: 22,
+  },
+  finishButton: {
+    backgroundColor: '#00D1FF',
+    paddingVertical: 15,
+    paddingHorizontal: 60,
+    borderRadius: 30,
+    shadowColor: '#00D1FF',
+    shadowOpacity: 0.5,
+    shadowRadius: 10,
+  },
+  finishText: {
+    color: 'black',
+    fontWeight: 'bold',
+    fontSize: 18,
+  }
+});
