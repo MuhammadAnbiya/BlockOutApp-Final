@@ -1,8 +1,11 @@
 import prisma from '../../../lib/prisma';
 import bcrypt from 'bcryptjs';
-import jwt from 'jsonwebtoken';
+import runCors from '../../../lib/cors';
+import { generateTokens } from '../../../lib/jwt';
 
 export default async function handler(req, res) {
+  if (runCors(req, res)) return;
+
   if (req.method !== 'POST') return res.status(405).end();
 
   const { email, password } = req.body;
@@ -19,11 +22,17 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: 'Invalid password' });
     }
 
-    const token = jwt.sign({ userId: user.id }, process.env.JWT_SECRET, { expiresIn: '7d' });
+    const { accessToken, refreshToken } = generateTokens(user.id);
+
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { refreshToken }
+    });
 
     res.status(200).json({ 
       message: 'Login success', 
-      token,
+      accessToken,
+      refreshToken,
       user: {
         id: user.id,
         firstName: user.firstName,

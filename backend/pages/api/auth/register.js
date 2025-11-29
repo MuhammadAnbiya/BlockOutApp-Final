@@ -1,17 +1,15 @@
 import prisma from '../../../lib/prisma';
 import bcrypt from 'bcryptjs';
-import jwt from 'jsonwebtoken';
+import runCors from '../../../lib/cors';
+import { generateTokens } from '../../../lib/jwt';
 
 export default async function handler(req, res) {
+  if (runCors(req, res)) return;
+
   if (req.method !== 'POST') return res.status(405).end();
 
   const { 
-    firstName, 
-    lastName, 
-    email, 
-    birthDate, 
-    phoneNumber, 
-    password 
+    firstName, lastName, email, birthDate, phoneNumber, password 
   } = req.body;
 
   if (!firstName || !lastName || !email || !password || !phoneNumber || !birthDate) {
@@ -20,9 +18,7 @@ export default async function handler(req, res) {
 
   try {
     const existingUser = await prisma.user.findFirst({
-      where: {
-        OR: [{ email }, { phoneNumber }]
-      }
+      where: { OR: [{ email }, { phoneNumber }] }
     });
 
     if (existingUser) {
@@ -31,15 +27,11 @@ export default async function handler(req, res) {
 
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    const user = await prisma.user.create({
+    const newUser = await prisma.user.create({
       data: {
-        firstName,
-        lastName,
-        email,
+        firstName, lastName, email, phoneNumber,
         birthDate: new Date(birthDate),
-        phoneNumber,
         passwordHash: hashedPassword,
-        
         avatarGender: "MALE",
         equippedTop: "starter_hair",
         equippedShirt: "starter_shirt",
@@ -48,16 +40,22 @@ export default async function handler(req, res) {
       }
     });
 
-    const token = jwt.sign({ userId: user.id }, process.env.JWT_SECRET, { expiresIn: '7d' });
+    const { accessToken, refreshToken } = generateTokens(newUser.id);
+
+    await prisma.user.update({
+      where: { id: newUser.id },
+      data: { refreshToken }
+    });
 
     res.status(201).json({ 
       message: 'User created successfully', 
-      token, 
+      accessToken, 
+      refreshToken,
       user: {
-        id: user.id,
-        firstName: user.firstName,
-        lastName: user.lastName,
-        email: user.email
+        id: newUser.id,
+        firstName: newUser.firstName,
+        lastName: newUser.lastName,
+        email: newUser.email
       }
     });
 
