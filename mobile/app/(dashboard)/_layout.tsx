@@ -1,12 +1,11 @@
 import { Colors } from "@/constants/theme";
 import { Ionicons } from "@expo/vector-icons";
 import MaterialIcons from "@expo/vector-icons/MaterialIcons";
-import { Tabs } from "expo-router";
+import { Tabs, useRouter } from "expo-router";
 import React from "react";
-import { Platform } from "react-native";
+import { Platform, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-// Memoize icon component untuk mencegah re-render
 const TabBarIcon = React.memo(
   ({
     routeName,
@@ -17,6 +16,29 @@ const TabBarIcon = React.memo(
     color: string;
     focused: boolean;
   }) => {
+    if (routeName === "camera") {
+      return (
+        <View
+          style={{
+            width: 50,
+            height: 50,
+            backgroundColor: Colors.tertiary,
+            borderRadius: 25,
+            justifyContent: "center",
+            alignItems: "center",
+            marginBottom: 20,
+            shadowColor: Colors.tertiary,
+            shadowOffset: { width: 0, height: 4 },
+            shadowOpacity: 0.3,
+            shadowRadius: 4,
+            elevation: 5,
+          }}
+        >
+          <Ionicons name="camera" size={28} color="black" />
+        </View>
+      );
+    }
+
     if (routeName === "blockout") {
       return (
         <MaterialIcons
@@ -55,13 +77,14 @@ const TabBarIcon = React.memo(
 
 const DashboardLayout = () => {
   const insets = useSafeAreaInsets();
+  const router = useRouter();
 
   return (
     <Tabs
       screenOptions={({ route }) => ({
         headerShown: false,
-        tabBarShowLabel: true,
-        lazy: true, // Lazy load tabs
+        tabBarShowLabel: route.name !== "camera",
+        lazy: true,
         animation: "shift",
         navigationBarColor: Colors.primary,
         freezeOnBlur: true,
@@ -75,23 +98,11 @@ const DashboardLayout = () => {
           elevation: 0,
           position: "absolute",
         },
-
-        tabBarItemStyle: {
-          paddingVertical: 0,
-        },
-
-        tabBarLabelStyle: {
-          marginTop: 4,
-          fontSize: 12,
-        },
-
+        tabBarItemStyle: { paddingVertical: 0 },
+        tabBarLabelStyle: { marginTop: 4, fontSize: 12 },
         tabBarActiveTintColor: Colors.tertiary,
         tabBarInactiveTintColor: Colors.quarternary,
-
-        sceneStyle: {
-          backgroundColor: Colors.primary,
-        },
-
+        sceneStyle: { backgroundColor: Colors.primary },
         tabBarIcon: ({ color, focused }) => (
           <TabBarIcon routeName={route.name} color={color} focused={focused} />
         ),
@@ -99,6 +110,20 @@ const DashboardLayout = () => {
     >
       <Tabs.Screen name="blockout" options={{ title: "Blockout" }} />
       <Tabs.Screen name="avatar" options={{ title: "Avatar" }} />
+
+      <Tabs.Screen
+        name="camera"
+        options={{
+          title: "Camera",
+        }}
+        listeners={() => ({
+          tabPress: (e) => {
+            e.preventDefault();
+            router.push("/(workout)/camera" as any);
+          },
+        })}
+      />
+
       <Tabs.Screen name="shop" options={{ title: "Shop" }} />
       <Tabs.Screen name="settings" options={{ title: "Settings" }} />
     </Tabs>

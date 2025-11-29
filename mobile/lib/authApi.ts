@@ -139,3 +139,27 @@ export async function apiGetUserProfile(token: string): Promise<any> {
 }
 
 export const getApiBaseUrl = () => AUTH_URL;
+
+export type MintPayload = {
+  workoutType: string;
+  count: number;
+  duration: number;
+  walletAddress?: string; // Opsional jika user belum connect wallet
+};
+
+export async function apiMintReward(payload: MintPayload, token: string) {
+  const res = await fetch(`${API_BASE_URL}/reward/mint`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${token}`
+    },
+    body: JSON.stringify(payload),
+  });
+
+  const json = await res.json();
+  if (!res.ok) {
+    throw new Error(json?.error || "Minting failed");
+  }
+  return json;
+}
