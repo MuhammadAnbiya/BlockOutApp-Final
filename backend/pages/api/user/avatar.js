@@ -1,12 +1,32 @@
 import prisma from '../../../lib/prisma';
 import { authMiddleware } from '../../../middleware/authMiddleware';
-import { SHOP_CATALOG } from '../../../lib/shopCatalog'
+import { SHOP_CATALOG } from '../../../lib/shopCatalog';
 
 const STARTER_ITEMS = [
-  { id: "starter_hair", name: "Red Hair", type: "TOP" },
-  { id: "starter_shirt", name: "Basic Shirt", type: "SHIRT" },
-  { id: "starter_pants", name: "Blue Shorts", type: "PANTS" },
-  { id: "starter_shoes", name: "Black Sneakers", type: "SHOES" }
+  { 
+    id: "starter_hair", 
+    name: "Red Hair", 
+    type: "TOP", 
+    imageUrl: "https://drive.google.com/uc?export=view&id=1s5Qq2ws3VjzD6PGzkzN9BnyfjSyqp1xV"
+  },
+  { 
+    id: "starter_shirt", 
+    name: "Basic Shirt", 
+    type: "SHIRT", 
+    imageUrl: "https://drive.google.com/uc?export=view&id=1wwZiehr5_muCLUS-eJ9UVeq0JQPIg7cK"
+  },
+  { 
+    id: "starter_pants", 
+    name: "Blue Shorts", 
+    type: "PANTS", 
+    imageUrl: "https://drive.google.com/uc?export=view&id=1hWjheZHJmDAZKDBLKCUNAthmDrQrLd3a"
+  },
+  { 
+    id: "starter_shoes", 
+    name: "Black Sneakers", 
+    type: "SHOES", 
+    imageUrl: "https://drive.google.com/uc?export=view&id=11aZxK21vTLcya359OCDN7T1Gu_2v9NW6"
+  }
 ];
 
 async function handler(req, res) {
@@ -25,11 +45,12 @@ async function handler(req, res) {
             return { 
                 id: inv.itemId, 
                 name: catalogItem.name, 
-                type: catalogItem.type 
+                type: catalogItem.type,
+                imageUrl: catalogItem.imageUrl
             };
         }
         return null;
-      }).filter(Boolean); 
+      }).filter(Boolean);
 
       const allMyItems = [...STARTER_ITEMS, ...ownedItems];
 
@@ -42,8 +63,7 @@ async function handler(req, res) {
 
       const responseData = {
         userProfile: {
-            name: `${user.firstName} ${user.lastName}`,
-            avatarUrl: user.avatarUrl || "",
+            name: `${user.firstName} ${user.lastName}`
         },
         equipped: {
             top: user.equippedTop,
@@ -61,7 +81,6 @@ async function handler(req, res) {
 
       return res.status(200).json(responseData);
     } catch (error) {
-      console.error("Avatar Error:", error);
       return res.status(500).json({ error: 'Failed to fetch avatar data' });
     }
   }
@@ -94,7 +113,6 @@ async function handler(req, res) {
       return res.status(200).json({ success: true, message: 'Avatar updated!' });
 
     } catch (error) {
-      console.error(error);
       return res.status(500).json({ error: 'Failed to equip item' });
     }
   }

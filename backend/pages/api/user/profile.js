@@ -42,18 +42,13 @@ async function handler(req, res) {
           w.createdAt.toISOString().startsWith(dateString)
         );
 
-        const pushUpCount = dayWorkouts
-          .filter(w => w.workoutType === 'PUSH_UP')
-          .reduce((sum, w) => sum + parseInt(w.amount), 0); 
-          // *KOREKSI*: Di mint.js kamu, amount adalah REWARD KOIN. 
-
         const sitUpCount = dayWorkouts.filter(w => w.workoutType === 'SIT_UP').length;
         const squatCount = dayWorkouts.filter(w => w.workoutType === 'SQUAT').length;
         const pushUpFreq = dayWorkouts.filter(w => w.workoutType === 'PUSH_UP').length;
 
         chartData.push({
           day: dayName,
-          PushUp: pushUpFreq * 10, 
+          PushUp: pushUpFreq * 10,
           SitUp: sitUpCount * 10,
           Squat: squatCount * 10
         });
@@ -63,34 +58,13 @@ async function handler(req, res) {
         user: {
           name: `${user.firstName} ${user.lastName}`,
           email: user.email,
-          avatarUrl: user.avatarUrl || "",
           streak: user.dayStreak
         },
         statistics: chartData
       });
 
     } catch (error) {
-      console.error("Profile Error:", error);
       return res.status(500).json({ error: 'Failed to fetch profile' });
-    }
-  }
-
-  if (req.method === 'PUT') {
-    const { avatarUrl } = req.body;
-
-    if (!avatarUrl) {
-      return res.status(400).json({ error: 'Avatar URL is required' });
-    }
-
-    try {
-      await prisma.user.update({
-        where: { id: userId },
-        data: { avatarUrl }
-      });
-
-      return res.status(200).json({ success: true, message: 'Profile picture updated' });
-    } catch (error) {
-      return res.status(500).json({ error: 'Failed to update profile' });
     }
   }
 

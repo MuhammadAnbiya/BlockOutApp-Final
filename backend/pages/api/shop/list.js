@@ -19,11 +19,10 @@ async function handler(req, res) {
         TOP: [],
         SHIRT: [],
         PANTS: [],
-        BOTTOM: [] 
+        BOTTOM: []
     };
 
     Object.values(SHOP_CATALOG).forEach(item => {
-        
         const status = ownedItemIds.has(item.id) ? "OWNED" : "AVAILABLE";
 
         const itemData = {
@@ -31,6 +30,7 @@ async function handler(req, res) {
             name: item.name,
             price: item.price,
             type: item.type,
+            imageUrl: item.imageUrl,
             status: status 
         };
 
@@ -42,8 +42,7 @@ async function handler(req, res) {
 
     return res.status(200).json({
         userProfile: {
-            name: `${user.firstName} ${user.lastName}`,
-            avatarUrl: user.avatarUrl || "",
+            name: `${user.firstName} ${user.lastName}`
         },
         stats: {
             coins: user.coinsBalance,
@@ -53,7 +52,6 @@ async function handler(req, res) {
     });
 
   } catch (error) {
-    console.error("Shop List Error:", error);
     return res.status(500).json({ error: 'Failed to fetch shop items' });
   }
 }
